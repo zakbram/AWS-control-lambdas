@@ -1,0 +1,181 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  Kill0 lambda creation
+  will detect 0.0.0.0/0 in ingress security group rules and delete the rule if found
+  
+
+Resources:
+  Kill0Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: kill0Role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: 'LambdaTriggerEventPolicy'
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: "VPCLambdaRequirments"
+                Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DeleteNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+              - Sid: "LambdaLogging"
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - "arn:*:logs:*:*:*"
+              - Sid: "SGaccess"
+                Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarms
+                  - ec2:DescribeRegions
+                  - ec2:DescribeSecurityGroupRules
+                  - ec2:RevokeSecurityGroupIngress
+                Resource: '*'
+
+  Kill0Lambda:
+    Type: AWS::Lambda::Function
+    DependsOn: 
+      - Kill0Role
+    Properties:
+      Description: 'scan and remove any ingress sgr with 0.0.0.0/0'
+      FunctionName: 'kill0'
+      MemorySize: 512
+      Role: !GetAtt Kill0Role.Arn
+      Timeout: 900
+      Runtime: python3.9
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import datetime
+          from botocore.exceptions import ClientError
+          import os
+          
+          
+          # lambda loggin to keep uuids
+          import logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO) 
+          logging.basicConfig()
+          
+          
+          # logger.debug("this will get logger.infoed")
+          # logger.info("this will get logger.infoed")
+          # logger.warning("this will get logger.infoed")
+          # logger.error("this will get logger.infoed")
+          # logger.critical("this will get logger.infoed")
+          
+         
+          if 'AWS_LAMBDA_FUNCTION_VERSION' in os.environ:
+              local = False
+          else:
+              local = True
+          
+          def datetime_handler(x):
+              if isinstance(x, datetime.datetime):
+                  return x.isoformat()
+              raise TypeError("Unknown type")
+          
+          def lambda_handler(event, context):
+              NonIP=0
+              BadIP=0
+          
+              regions = ListRegions()
+              #regions = ['ap-southeast-2']  
+              for rgn in regions:
+                  logger.info(rgn)
+                  ec2 = boto3.client('ec2', region_name= rgn)
+          
+                  paginator = ec2.get_paginator('describe_security_group_rules')
+                  response_iterator = paginator.paginate()
+          
+                  for response in response_iterator:
+                      #print(response['SecurityGroupRules'])
+                      sgrList = response['SecurityGroupRules']
+                      for sgr in sgrList:
+                          if sgr['IsEgress'] == False:
+                              #logger.info('SGR : ' + str(sgr['SecurityGroupRuleId']) + ' - IsEgress : ' + str(sgr['IsEgress']))
+                              try:
+                                  #logger.info(sgr['CidrIpv4'])
+                                  testIP=(sgr['CidrIpv4'])
+                                  if testIP == '0.0.0.0/0':
+                                      logger.info('0.0.0.0/0 FOUND in SG : ' + str(sgr['GroupId']) +  'SGR : ' + str(sgr['SecurityGroupRuleId']) + ' for removal' )
+          
+                                      Rec2 = boto3.resource('ec2', region_name= rgn)
+                                      security_group = Rec2.SecurityGroup(sgr['GroupId'])
+                                      removeSGingress(security_group, sgr['SecurityGroupRuleId'])
+                                      BadIP += 1                    
+                              except:
+                                  NonIP += 1
+                                  #logger.warning('No IP found for posable sg listing for ' + str(sgr['SecurityGroupRuleId']))
+              print('Number of SG with no ip - ' + str(NonIP))
+              print('Number of rules found with 0.0.0.0/0 - ' + str(BadIP))
+              return {
+                  'statusCode': 200
+              }
+                    
+          
+          def ListRegions():
+              ec2 = boto3.client('ec2')
+              try:
+                  regions = [region['RegionName'] for region in ec2.describe_regions()['Regions']]
+                  return(regions)
+          
+              except ClientError as e:
+                  logger.error(e)
+          
+          
+          
+          def removeSGingress(security_group, RuleID):
+              try:
+                  response = security_group.revoke_ingress(SecurityGroupRuleIds = [RuleID] )
+                  logger.info(str(RuleID) + ' REMOVED')
+          
+              except ClientError as e:
+                  logger.error(e)
+          
+          
+          if local:
+              event={}
+              boto3.setup_default_session(profile_name='cloudranger_target1')
+              response = lambda_handler(event,0)
+              logger.info(response)
+
+  EventBridgeScheduledRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Trigger Kill0"
+      Name: "Kill0Trigger"
+      ScheduleExpression: !Sub "cron(0 * * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "Kill0Lambda"
+              - "Arn"
+          Id: "TargetKill0Lambda"
+  PermissionForEventsToInvokeLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: !Ref "Kill0Lambda"
+      Action: "lambda:InvokeFunction"
+      Principal: "events.amazonaws.com"
+      SourceArn: 
+        Fn::GetAtt: 
+          - "EventBridgeScheduledRule"
+          - "Arn"
