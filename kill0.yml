@@ -79,16 +79,33 @@ Resources:
           # logger.error("this will get logger.infoed")
           # logger.critical("this will get logger.infoed")
           
-         
+          
+          
+          # add to policy
+                  # {
+                  #     "Sid": "SGaccess",
+                  #     "Effect": "Allow",
+                  #     "Action": [
+                  #         "ec2:DescribeRegions",
+                  #         "ec2:DescribeSecurityGroupRules",
+                  #         "ec2:RevokeSecurityGroupIngress"
+                  #     ],
+                  #     "Resource": "*"
+                  # }
+          
+          
           if 'AWS_LAMBDA_FUNCTION_VERSION' in os.environ:
               local = False
           else:
               local = True
           
+
+          
           def datetime_handler(x):
               if isinstance(x, datetime.datetime):
                   return x.isoformat()
               raise TypeError("Unknown type")
+          
           
           def lambda_handler(event, context):
               NonIP=0
@@ -110,19 +127,26 @@ Resources:
                           if sgr['IsEgress'] == False:
                               #logger.info('SGR : ' + str(sgr['SecurityGroupRuleId']) + ' - IsEgress : ' + str(sgr['IsEgress']))
                               try:
-                                  #logger.info(sgr['CidrIpv4'])
                                   testIP=(sgr['CidrIpv4'])
-                                  testIPv6=(sgr['CidrIpv6'])
-                                  if testIP == '0.0.0.0/0' or testIPv6 == '::0':
-                                      logger.info('0.0.0.0/0 or ::0 FOUND in SG : ' + str(sgr['GroupId']) +  'SGR : ' + str(sgr['SecurityGroupRuleId']) + ' for removal' )
+                                  ipType = 'ipv4'
+                              except:
+                                  try:
+                                      testIP=(sgr['CidrIpv6'])
+                                      ipType = 'ipv6'
+                                  except:
+                                      NonIP += 1
           
+                              try:
+                                  #logger.info(str(testIP))
+                                  if testIP == '0.0.0.0/0' or testIP == '::/0':
+                                      logger.info(str(testIP) + ' FOUND in SG : ' + str(sgr['GroupId']) +  'SGR : ' + str(sgr['SecurityGroupRuleId']) + ' for removal' )
                                       Rec2 = boto3.resource('ec2', region_name= rgn)
                                       security_group = Rec2.SecurityGroup(sgr['GroupId'])
-                                      removeSGingress(security_group, sgr['SecurityGroupRuleId'])
+                                      ret = removeSGingress(security_group, sgr['SecurityGroupRuleId'])
                                       BadIP += 1                    
                               except:
-                                  NonIP += 1
-                                  #logger.warning('No IP found for posable sg listing for ' + str(sgr['SecurityGroupRuleId']))
+                                  logger.info('error removing ' + str(sgr['SecurityGroupRuleId']) + ' from ' + str(sgr['GroupId']) )
+              
               print('Number of SG with no ip - ' + str(NonIP))
               print('Number of rules found with 0.0.0.0/0 or ::0 - ' + str(BadIP))
               return {
@@ -150,11 +174,16 @@ Resources:
                   logger.error(e)
           
           
+          
+          
           if local:
               event={}
               boto3.setup_default_session(profile_name='cloudranger_target1')
               response = lambda_handler(event,0)
               logger.info(response)
+          
+          
+          
 
   EventBridgeScheduledRule: 
     Type: AWS::Events::Rule
