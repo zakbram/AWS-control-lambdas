@@ -199,6 +199,27 @@ Resources:
               - "Kill0Lambda"
               - "Arn"
           Id: "TargetKill0Lambda"
+
+  EventBridgeOnCreateRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "Kill0OnCreate"
+      Name: "Kill0OnCreate"
+      EventPattern:
+        source: 
+          - ec2.amazonaws.com
+        eventName: 
+          - AuthorizeSecurityGroupIngress
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "Kill0Lambda"
+              - "Arn"
+          Id: "TargetKill0Lambda"
+          
+          
   PermissionForEventsToInvokeLambda: 
     Type: AWS::Lambda::Permission
     Properties: 
