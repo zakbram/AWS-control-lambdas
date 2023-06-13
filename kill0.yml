@@ -188,8 +188,8 @@ Resources:
   EventBridgeScheduledRule: 
     Type: AWS::Events::Rule
     Properties: 
-      Description: "Trigger Kill0"
-      Name: "Kill0Trigger"
+      Description: "Kill0Cron"
+      Name: "Kill0Cron"
       ScheduleExpression: !Sub "cron(0 * * * ? *)"
       State: "ENABLED"
       Targets: 
